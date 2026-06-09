@@ -371,6 +371,29 @@ export default function App() {
     if (error) alert(error.message);
   }
 
+  async function deleteApp(appToDelete: BlueprintApp) {
+    if (!supabase) return;
+    const confirmed = window.confirm(`"${appToDelete.name}" 앱을 삭제하시겠습니까?`);
+    if (!confirmed) return;
+
+    const remainingApps = apps.filter((app) => app.id !== appToDelete.id);
+    setApps(remainingApps);
+
+    if (selectedAppId === appToDelete.id) {
+      setSelectedAppId(remainingApps[0]?.id ?? null);
+      setPlanningItems([]);
+      setMemos([]);
+      setTodos([]);
+      setSelectedPlanningId(null);
+    }
+
+    const { error } = await supabase.from('bp_apps').delete().eq('id', appToDelete.id);
+    if (error) {
+      alert(error.message);
+      if (user) void loadApps(user).catch((loadError) => alert(loadError.message));
+    }
+  }
+
   async function addPlanningItem(status: PlanningStatus) {
     if (!supabase || !selectedApp) return;
     const draft = { app_id: selectedApp.id, title: '새 기획 항목', body: '', status };
@@ -547,19 +570,30 @@ export default function App() {
       </div>
       <div className="scrollbar-thin flex-1 overflow-y-auto p-3">
         {filteredApps.map((app) => (
-          <button
+          <div
             key={app.id}
-            onClick={() => {
-              setSelectedAppId(app.id);
-              setMobileSidebar(false);
-            }}
-            className={`mb-1 flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition ${
+            className={`group mb-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm transition ${
               app.id === selectedAppId ? 'bg-violet-50 text-violet-800' : 'text-slate-700 hover:bg-slate-100'
             }`}
           >
-            <span className={`h-2.5 w-2.5 rounded-full ${statusDot[app.status]}`} />
-            <span className="truncate font-medium">{app.name}</span>
-          </button>
+            <button
+              onClick={() => {
+                setSelectedAppId(app.id);
+                setMobileSidebar(false);
+              }}
+              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+            >
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDot[app.status]}`} />
+              <span className="truncate font-medium">{app.name}</span>
+            </button>
+            <button
+              onClick={() => deleteApp(app)}
+              className="rounded-md p-1.5 text-slate-400 opacity-100 hover:bg-white hover:text-rose-600 sm:opacity-0 sm:group-hover:opacity-100"
+              title="앱 삭제"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
         ))}
       </div>
       <div className="border-t border-slate-200 p-3">
