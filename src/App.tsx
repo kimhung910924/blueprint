@@ -14,7 +14,9 @@ import {
   PanelLeftOpen,
   Plus,
   Search,
+  Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import type {
@@ -57,6 +59,12 @@ const tabs: { key: TabKey; label: string }[] = [
   { key: 'memos', label: '메모' },
   { key: 'todos', label: '할 일' },
 ];
+
+type ParsedImport = {
+  planning: { title: string; status: PlanningStatus }[];
+  memos: { tag: MemoTag; text: string }[];
+  todos: { text: string; done: false }[];
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -114,6 +122,41 @@ ${todos.map((todo) => `- [${todo.done ? 'x' : ' '}] ${todo.text}`).join('\n') ||
 function normalizePlanningStatus(status: string): PlanningStatus {
   if (status === '확정' || status === '고민중' || status === '아이디어') return status;
   return '아이디어';
+}
+
+function normalizeMemoTag(tag: string): MemoTag {
+  if (tag === '메모' || tag === '결정전아이디어' || tag === '나중에검토') return tag;
+  return '메모';
+}
+
+function normalizeParsedImport(value: unknown): ParsedImport {
+  const object = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const planning = Array.isArray(object.planning)
+    ? object.planning.flatMap((item) => {
+        const row = item && typeof item === 'object' && !Array.isArray(item) ? (item as Record<string, unknown>) : {};
+        const title = typeof row.title === 'string' ? row.title.trim() : '';
+        if (!title) return [];
+        return [{ title, status: normalizePlanningStatus(String(row.status ?? '아이디어')) }];
+      })
+    : [];
+  const memos = Array.isArray(object.memos)
+    ? object.memos.flatMap((item) => {
+        const row = item && typeof item === 'object' && !Array.isArray(item) ? (item as Record<string, unknown>) : {};
+        const text = typeof row.text === 'string' ? row.text.trim() : '';
+        if (!text) return [];
+        return [{ tag: normalizeMemoTag(String(row.tag ?? '메모')), text }];
+      })
+    : [];
+  const todos = Array.isArray(object.todos)
+    ? object.todos.flatMap((item) => {
+        const row = item && typeof item === 'object' && !Array.isArray(item) ? (item as Record<string, unknown>) : {};
+        const text = typeof row.text === 'string' ? row.text.trim() : '';
+        if (!text) return [];
+        return [{ text, done: false as const }];
+      })
+    : [];
+
+  return { planning, memos, todos };
 }
 
 function EnvMissing() {
@@ -217,6 +260,10 @@ export default function App() {
   const [newMemoText, setNewMemoText] = useState('');
   const [newTodoText, setNewTodoText] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
+  const [aiImportOpen, setAiImportOpen] = useState(false);
+  const [aiImportText, setAiImportText] = useState('');
+  const [aiImportLoading, setAiImportLoading] = useState(false);
+  const [aiImportError, setAiImportError] = useState('');
   const [dataLoading, setDataLoading] = useState(false);
 
   const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
@@ -401,6 +448,70 @@ export default function App() {
     if (error) alert(error.message);
   }
 
+  async function importParsedContent(parsed: ParsedImport) {
+    if (!supabase || !selectedApp) return;
+    const [planningResult, memosResult, todosResult] = await Promise.all([
+      parsed.planning.length
+        ? supabase
+            .from('bp_planning_items')
+            .insert(parsed.planning.map((item) => ({ app_id: selectedApp.id, title: item.title, body: '', status: item.status })))
+            .select('*')
+        : Promise.resolve({ data: [], error: null }),
+      parsed.memos.length
+        ? supabase
+            .from('bp_memos')
+            .insert(parsed.memos.map((memo) => ({ app_id: selectedApp.id, tag: memo.tag, text: memo.text })))
+            .select('*')
+        : Promise.resolve({ data: [], error: null }),
+      parsed.todos.length
+        ? supabase
+            .from('bp_todos')
+            .insert(parsed.todos.map((todo) => ({ app_id: selectedApp.id, text: todo.text, done: todo.done })))
+            .select('*')
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (planningResult.error) throw planningResult.error;
+    if (memosResult.error) throw memosResult.error;
+    if (todosResult.error) throw todosResult.error;
+
+    setPlanningItems((current) => [...((planningResult.data ?? []) as PlanningItem[]), ...current]);
+    setMemos((current) => [...((memosResult.data ?? []) as Memo[]), ...current]);
+    setTodos((current) => [...((todosResult.data ?? []) as Todo[]), ...current]);
+  }
+
+  async function parseWithAi() {
+    if (!aiImportText.trim()) {
+      setAiImportError('분석할 텍스트를 붙여넣어 주세요.');
+      return;
+    }
+
+    setAiImportLoading(true);
+    setAiImportError('');
+
+    try {
+      const response = await fetch('/api/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: aiImportText }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'AI 분석에 실패했습니다.');
+      }
+
+      const parsed = normalizeParsedImport(result);
+      await importParsedContent(parsed);
+      setAiImportText('');
+      setAiImportOpen(false);
+    } catch (error) {
+      setAiImportError(error instanceof Error ? error.message : 'AI 분석에 실패했습니다.');
+    } finally {
+      setAiImportLoading(false);
+    }
+  }
+
   function exportCurrent(format: 'md' | 'txt') {
     if (!selectedApp) return;
     const content = buildExport(selectedApp, planningItems, memos, todos);
@@ -493,7 +604,17 @@ export default function App() {
             </div>
           </div>
           {selectedApp && (
-            <div className="relative">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setAiImportOpen(true);
+                  setAiImportError('');
+                }}
+                className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <Sparkles size={16} /> AI로 가져오기
+              </button>
+              <div className="relative">
               <button
                 onClick={() => setExportOpen((value) => !value)}
                 className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -510,6 +631,7 @@ export default function App() {
                   </button>
                 </div>
               )}
+              </div>
             </div>
           )}
         </header>
@@ -727,6 +849,40 @@ export default function App() {
           </section>
         )}
       </main>
+      {aiImportOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4">
+          <section className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <h2 className="text-base font-semibold text-slate-950">AI로 가져오기</h2>
+              <button
+                onClick={() => setAiImportOpen(false)}
+                className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                title="닫기"
+              >
+                <X size={17} />
+              </button>
+            </div>
+            <div className="p-5">
+              <textarea
+                value={aiImportText}
+                onChange={(event) => setAiImportText(event.target.value)}
+                className="textarea min-h-72"
+                placeholder="정리할 기획 텍스트, 메모, 할 일을 붙여넣으세요."
+              />
+              {aiImportError && <p className="mt-3 text-sm font-medium text-rose-600">{aiImportError}</p>}
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setAiImportOpen(false)} className="btn-muted" disabled={aiImportLoading}>
+                  취소
+                </button>
+                <button onClick={parseWithAi} className="btn-primary" disabled={aiImportLoading}>
+                  <Sparkles size={16} />
+                  {aiImportLoading ? '분석 중...' : '분석하기'}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
