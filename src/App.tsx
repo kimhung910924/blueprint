@@ -14,6 +14,7 @@ import {
   PanelLeftOpen,
   Plus,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import type {
@@ -28,8 +29,7 @@ import type {
 } from './types';
 
 const appStatuses: AppStatus[] = ['개발중', '검토중', '아이디어', '보류'];
-const planningStatuses: PlanningStatus[] = ['확정', '고민중', '아이디어', '보류'];
-const visibleKanbanStatuses: PlanningStatus[] = ['확정', '고민중', '아이디어'];
+const planningStatuses: PlanningStatus[] = ['확정', '고민중', '아이디어'];
 const memoTags: MemoTag[] = ['메모', '결정전아이디어', '나중에검토'];
 
 const statusDot: Record<AppStatus, string> = {
@@ -43,7 +43,6 @@ const planningBadge: Record<PlanningStatus, string> = {
   확정: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
   고민중: 'bg-sky-50 text-sky-700 ring-sky-200',
   아이디어: 'bg-slate-100 text-slate-700 ring-slate-200',
-  보류: 'bg-amber-50 text-amber-700 ring-amber-200',
 };
 
 const tagBadge: Record<MemoTag, string> = {
@@ -80,7 +79,7 @@ function downloadFile(filename: string, content: string, type: string) {
 function buildExport(app: BlueprintApp, planning: PlanningItem[], memos: Memo[], todos: Todo[]) {
   const planningByStatus = planningStatuses.reduce<Record<PlanningStatus, PlanningItem[]>>(
     (acc, status) => ({ ...acc, [status]: planning.filter((item) => item.status === status) }),
-    { 확정: [], 고민중: [], 아이디어: [], 보류: [] },
+    { 확정: [], 고민중: [], 아이디어: [] },
   );
 
   return `# ${app.name}
@@ -110,6 +109,11 @@ ${memos.map((memo) => `- [${memo.tag}] ${memo.text}`).join('\n') || '-'}
 ## 할 일
 ${todos.map((todo) => `- [${todo.done ? 'x' : ' '}] ${todo.text}`).join('\n') || '-'}
 `;
+}
+
+function normalizePlanningStatus(status: string): PlanningStatus {
+  if (status === '확정' || status === '고민중' || status === '아이디어') return status;
+  return '아이디어';
 }
 
 function EnvMissing() {
@@ -206,7 +210,6 @@ export default function App() {
     확정: false,
     고민중: false,
     아이디어: false,
-    보류: true,
   });
   const [memoFilter, setMemoFilter] = useState<'전체' | MemoTag>('전체');
   const [newMemoOpen, setNewMemoOpen] = useState(false);
@@ -258,7 +261,12 @@ export default function App() {
     if (memosResult.error) throw memosResult.error;
     if (todosResult.error) throw todosResult.error;
 
-    setPlanningItems((planningResult.data ?? []) as PlanningItem[]);
+    setPlanningItems(
+      ((planningResult.data ?? []) as PlanningItem[]).map((item) => ({
+        ...item,
+        status: normalizePlanningStatus(item.status),
+      })),
+    );
     setMemos((memosResult.data ?? []) as Memo[]);
     setTodos((todosResult.data ?? []) as Todo[]);
     setSelectedPlanningId(null);
@@ -332,6 +340,14 @@ export default function App() {
     if (error) alert(error.message);
   }
 
+  async function deletePlanningItem(id: string) {
+    if (!supabase) return;
+    setPlanningItems((current) => current.filter((item) => item.id !== id));
+    setSelectedPlanningId((current) => (current === id ? null : current));
+    const { error } = await supabase.from('bp_planning_items').delete().eq('id', id);
+    if (error) alert(error.message);
+  }
+
   async function addMemo() {
     if (!supabase || !selectedApp || !newMemoText.trim()) return;
     const { data, error } = await supabase
@@ -343,6 +359,20 @@ export default function App() {
     setMemos((current) => [data as Memo, ...current]);
     setNewMemoText('');
     setNewMemoOpen(false);
+  }
+
+  async function updateMemo(id: string, patch: Partial<Memo>) {
+    if (!supabase) return;
+    setMemos((current) => current.map((memo) => (memo.id === id ? { ...memo, ...patch } : memo)));
+    const { error } = await supabase.from('bp_memos').update(patch).eq('id', id);
+    if (error) alert(error.message);
+  }
+
+  async function deleteMemo(id: string) {
+    if (!supabase) return;
+    setMemos((current) => current.filter((memo) => memo.id !== id));
+    const { error } = await supabase.from('bp_memos').delete().eq('id', id);
+    if (error) alert(error.message);
   }
 
   async function addTodo() {
@@ -364,6 +394,13 @@ export default function App() {
     if (error) alert(error.message);
   }
 
+  async function deleteTodo(id: string) {
+    if (!supabase) return;
+    setTodos((current) => current.filter((todo) => todo.id !== id));
+    const { error } = await supabase.from('bp_todos').delete().eq('id', id);
+    if (error) alert(error.message);
+  }
+
   function exportCurrent(format: 'md' | 'txt') {
     if (!selectedApp) return;
     const content = buildExport(selectedApp, planningItems, memos, todos);
@@ -378,16 +415,10 @@ export default function App() {
 
   const sidebar = (
     <aside className="flex h-full w-80 shrink-0 flex-col border-r border-slate-200 bg-white">
-      <div className="flex h-16 items-center justify-between border-b border-slate-200 px-4">
-        <button onClick={() => setSidebarOpen(false)} className="hidden rounded-md p-2 text-slate-500 hover:bg-slate-100 lg:block" title="사이드바 접기">
-          <PanelLeftClose size={18} />
-        </button>
-        <div className="min-w-0 flex-1 px-2">
+      <div className="flex h-16 items-center border-b border-slate-200 px-4">
+        <div className="min-w-0 flex-1">
           <p className="truncate text-lg font-semibold text-slate-950">Blueprint</p>
         </div>
-        <button onClick={() => void supabase?.auth.signOut()} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" title="로그아웃">
-          <LogOut size={18} />
-        </button>
       </div>
       <div className="space-y-3 border-b border-slate-200 p-4">
         <div className="relative">
@@ -420,6 +451,16 @@ export default function App() {
           </button>
         ))}
       </div>
+      <div className="border-t border-slate-200 p-3">
+        <button
+          onClick={() => void supabase?.auth.signOut()}
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-md text-sm font-medium text-slate-600 hover:bg-slate-100"
+          title="로그아웃"
+        >
+          <LogOut size={16} />
+          로그아웃
+        </button>
+      </div>
     </aside>
   );
 
@@ -439,11 +480,13 @@ export default function App() {
             <button onClick={() => setMobileSidebar(true)} className="rounded-md p-2 text-slate-600 hover:bg-slate-100 lg:hidden" title="메뉴">
               <Menu size={19} />
             </button>
-            {!sidebarOpen && (
-              <button onClick={() => setSidebarOpen(true)} className="hidden rounded-md p-2 text-slate-600 hover:bg-slate-100 lg:block" title="사이드바 펼치기">
-                <PanelLeftOpen size={19} />
-              </button>
-            )}
+            <button
+              onClick={() => setSidebarOpen((open) => !open)}
+              className="hidden rounded-md p-2 text-slate-600 hover:bg-slate-100 lg:block"
+              title={sidebarOpen ? '사이드바 접기' : '사이드바 펼치기'}
+            >
+              {sidebarOpen ? <PanelLeftClose size={19} /> : <PanelLeftOpen size={19} />}
+            </button>
             <div>
               <h1 className="truncate text-base font-semibold text-slate-950 sm:text-lg">{selectedApp?.name ?? '앱을 추가하세요'}</h1>
               {selectedApp && <p className="hidden text-xs text-slate-500 sm:block">{selectedApp.description || '한 줄 설명 없음'}</p>}
@@ -545,7 +588,7 @@ export default function App() {
                     </div>
                     {planningView === 'kanban' ? (
                       <div className="grid gap-4 lg:grid-cols-3">
-                        {visibleKanbanStatuses.map((status) => (
+                        {planningStatuses.map((status) => (
                           <section key={status} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                             <h3 className="mb-3 flex items-center justify-between text-sm font-semibold text-slate-700">
                               {status}
@@ -553,7 +596,13 @@ export default function App() {
                             </h3>
                             <div className="space-y-2">
                               {planningItems.filter((item) => item.status === status).map((item) => (
-                                <PlanningCard key={item.id} item={item} onOpen={() => setSelectedPlanningId(item.id)} onStatus={(next) => updatePlanningItem(item.id, { status: next })} />
+                                <PlanningCard
+                                  key={item.id}
+                                  item={item}
+                                  onOpen={() => setSelectedPlanningId(item.id)}
+                                  onStatus={(next) => updatePlanningItem(item.id, { status: next })}
+                                  onDelete={() => deletePlanningItem(item.id)}
+                                />
                               ))}
                             </div>
                             <button onClick={() => addPlanningItem(status)} className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-md border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-500 hover:text-slate-900">
@@ -577,10 +626,19 @@ export default function App() {
                               {!collapsed && (
                                 <div className="divide-y divide-slate-100 border-t border-slate-100">
                                   {items.map((item) => (
-                                    <button key={item.id} onClick={() => setSelectedPlanningId(item.id)} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50">
-                                      <span className="truncate text-sm font-medium text-slate-800">{item.title}</span>
-                                      <span className={`rounded-full px-2 py-1 text-xs font-semibold ${planningBadge[item.status]}`}>{item.status}</span>
-                                    </button>
+                                    <div key={item.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50">
+                                      <button onClick={() => setSelectedPlanningId(item.id)} className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left">
+                                        <span className="truncate text-sm font-medium text-slate-800">{item.title}</span>
+                                        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${planningBadge[item.status]}`}>{item.status}</span>
+                                      </button>
+                                      <button
+                                        onClick={() => deletePlanningItem(item.id)}
+                                        className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                        title="기획 삭제"
+                                      >
+                                        <Trash2 size={15} />
+                                      </button>
+                                    </div>
                                   ))}
                                   <button onClick={() => addPlanningItem(status)} className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-slate-500 hover:text-slate-900">
                                     <Plus size={15} /> 추가
@@ -627,7 +685,26 @@ export default function App() {
                   <div className="space-y-2">
                     {filteredMemos.map((memo) => (
                       <article key={memo.id} className="rounded-lg border border-slate-200 bg-white p-4">
-                        <span className={`rounded-full px-2 py-1 text-xs font-semibold ${tagBadge[memo.tag]}`}>{memo.tag}</span>
+                        <div className="flex items-start justify-between gap-3">
+                          <select
+                            value={memo.tag}
+                            onChange={(e) => updateMemo(memo.id, { tag: e.target.value as MemoTag })}
+                            className={`h-8 rounded-full border-0 px-3 text-xs font-semibold outline-none ring-1 ${tagBadge[memo.tag]}`}
+                          >
+                            {memoTags.map((tag) => (
+                              <option key={tag} value={tag}>
+                                {tag}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => deleteMemo(memo.id)}
+                            className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                            title="메모 삭제"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                         <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{memo.text}</p>
                       </article>
                     ))}
@@ -643,8 +720,7 @@ export default function App() {
                       <Plus size={16} /> 추가
                     </button>
                   </div>
-                  <TodoSection title="진행중" todos={todos.filter((todo) => !todo.done)} onToggle={toggleTodo} />
-                  <TodoSection title="완료" todos={todos.filter((todo) => todo.done)} onToggle={toggleTodo} />
+                  <TodoSection title="할 일" todos={todos} onToggle={toggleTodo} onDelete={deleteTodo} />
                 </div>
               )}
             </div>
@@ -668,18 +744,25 @@ function PlanningCard({
   item,
   onOpen,
   onStatus,
+  onDelete,
 }: {
   item: PlanningItem;
   onOpen: () => void;
   onStatus: (status: PlanningStatus) => void;
+  onDelete: () => void;
 }) {
   return (
-    <button onClick={onOpen} className="w-full rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300">
-      <p className="truncate text-sm font-semibold text-slate-900">{item.title}</p>
-      <div className="mt-4">
+    <div className="rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300">
+      <button onClick={onOpen} className="block w-full text-left">
+        <p className="truncate text-sm font-semibold text-slate-900">{item.title}</p>
+      </button>
+      <div className="mt-4 flex items-center justify-between gap-3">
         <PlanningStatusSelect value={item.status} onChange={onStatus} />
+        <button onClick={onDelete} className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="기획 삭제">
+          <Trash2 size={15} />
+        </button>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -708,7 +791,17 @@ function PlanningDetail({
   );
 }
 
-function TodoSection({ title, todos, onToggle }: { title: string; todos: Todo[]; onToggle: (todo: Todo) => void }) {
+function TodoSection({
+  title,
+  todos,
+  onToggle,
+  onDelete,
+}: {
+  title: string;
+  todos: Todo[];
+  onToggle: (todo: Todo) => void;
+  onDelete: (id: string) => void;
+}) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
       <h2 className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-slate-800">
@@ -716,12 +809,21 @@ function TodoSection({ title, todos, onToggle }: { title: string; todos: Todo[];
       </h2>
       <div className="divide-y divide-slate-100">
         {todos.map((todo) => (
-          <button key={todo.id} onClick={() => onToggle(todo)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50">
-            <span className={`flex h-5 w-5 items-center justify-center rounded border ${todo.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300'}`}>
-              {todo.done && <Check size={14} />}
-            </span>
-            <span className={`text-sm ${todo.done ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{todo.text}</span>
-          </button>
+          <div key={todo.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50">
+            <button onClick={() => onToggle(todo)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+              <span className={`flex h-5 w-5 items-center justify-center rounded border ${todo.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300'}`}>
+                {todo.done && <Check size={14} />}
+              </span>
+              <span className={`text-sm ${todo.done ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{todo.text}</span>
+            </button>
+            <button
+              onClick={() => onDelete(todo.id)}
+              className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              title="할 일 삭제"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
         ))}
       </div>
     </section>

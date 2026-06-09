@@ -1,5 +1,5 @@
 export type AppStatus = '개발중' | '검토중' | '보류' | '아이디어';
-export type PlanningStatus = '확정' | '고민중' | '아이디어' | '보류';
+export type PlanningStatus = '확정' | '고민중' | '아이디어';
 export type MemoTag = '메모' | '결정전아이디어' | '나중에검토';
 export type TabKey = 'overview' | 'planning' | 'memos' | 'todos';
 
