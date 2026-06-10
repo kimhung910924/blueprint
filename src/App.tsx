@@ -264,6 +264,7 @@ export default function App() {
   const [aiImportText, setAiImportText] = useState('');
   const [aiImportLoading, setAiImportLoading] = useState(false);
   const [aiImportError, setAiImportError] = useState('');
+  const [aiImportSummary, setAiImportSummary] = useState('');
   const [dataLoading, setDataLoading] = useState(false);
 
   const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
@@ -473,23 +474,24 @@ export default function App() {
 
   async function importParsedContent(parsed: ParsedImport) {
     if (!supabase || !selectedApp) return;
+    const appId = selectedApp.id;
     const [planningResult, memosResult, todosResult] = await Promise.all([
       parsed.planning.length
         ? supabase
             .from('bp_planning_items')
-            .insert(parsed.planning.map((item) => ({ app_id: selectedApp.id, title: item.title, body: '', status: item.status })))
+            .insert(parsed.planning.map((item) => ({ app_id: appId, title: item.title, body: '', status: item.status })))
             .select('*')
         : Promise.resolve({ data: [], error: null }),
       parsed.memos.length
         ? supabase
             .from('bp_memos')
-            .insert(parsed.memos.map((memo) => ({ app_id: selectedApp.id, tag: memo.tag, text: memo.text })))
+            .insert(parsed.memos.map((memo) => ({ app_id: appId, tag: memo.tag, text: memo.text })))
             .select('*')
         : Promise.resolve({ data: [], error: null }),
       parsed.todos.length
         ? supabase
             .from('bp_todos')
-            .insert(parsed.todos.map((todo) => ({ app_id: selectedApp.id, text: todo.text, done: todo.done })))
+            .insert(parsed.todos.map((todo) => ({ app_id: appId, text: todo.text, done: todo.done })))
             .select('*')
         : Promise.resolve({ data: [], error: null }),
     ]);
@@ -501,6 +503,13 @@ export default function App() {
     setPlanningItems((current) => [...((planningResult.data ?? []) as PlanningItem[]), ...current]);
     setMemos((current) => [...((memosResult.data ?? []) as Memo[]), ...current]);
     setTodos((current) => [...((todosResult.data ?? []) as Todo[]), ...current]);
+    await loadAppData(appId);
+
+    return {
+      planning: (planningResult.data ?? []).length,
+      memos: (memosResult.data ?? []).length,
+      todos: (todosResult.data ?? []).length,
+    };
   }
 
   async function parseWithAi() {
@@ -511,6 +520,7 @@ export default function App() {
 
     setAiImportLoading(true);
     setAiImportError('');
+    setAiImportSummary('');
 
     try {
       const response = await fetch('/api/parse', {
@@ -521,13 +531,24 @@ export default function App() {
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || 'AI 분석에 실패했습니다.');
+        const rawMessage = typeof result.raw === 'string' && result.raw ? `\n\nClaude 응답: ${result.raw}` : '';
+        throw new Error(`${result.error || 'AI 분석에 실패했습니다.'}${rawMessage}`);
       }
 
       const parsed = normalizeParsedImport(result);
-      await importParsedContent(parsed);
+      const totalCount = parsed.planning.length + parsed.memos.length + parsed.todos.length;
+      if (totalCount === 0) {
+        throw new Error('AI가 추가할 기획, 메모, 할 일을 찾지 못했습니다. 텍스트를 조금 더 구체적으로 붙여넣어 주세요.');
+      }
+
+      const inserted = await importParsedContent(parsed);
+      const insertedCount = (inserted?.planning ?? 0) + (inserted?.memos ?? 0) + (inserted?.todos ?? 0);
+      if (insertedCount === 0) {
+        throw new Error('분석은 됐지만 Supabase에 추가된 항목이 없습니다.');
+      }
+
       setAiImportText('');
-      setAiImportOpen(false);
+      setAiImportSummary(`추가 완료: 기획 ${inserted?.planning ?? 0}개, 메모 ${inserted?.memos ?? 0}개, 할 일 ${inserted?.todos ?? 0}개`);
     } catch (error) {
       setAiImportError(error instanceof Error ? error.message : 'AI 분석에 실패했습니다.');
     } finally {
@@ -643,6 +664,7 @@ export default function App() {
                 onClick={() => {
                   setAiImportOpen(true);
                   setAiImportError('');
+                  setAiImportSummary('');
                 }}
                 className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
@@ -904,6 +926,7 @@ export default function App() {
                 placeholder="정리할 기획 텍스트, 메모, 할 일을 붙여넣으세요."
               />
               {aiImportError && <p className="mt-3 text-sm font-medium text-rose-600">{aiImportError}</p>}
+              {aiImportSummary && <p className="mt-3 text-sm font-medium text-emerald-700">{aiImportSummary}</p>}
               <div className="mt-4 flex justify-end gap-2">
                 <button onClick={() => setAiImportOpen(false)} className="btn-muted" disabled={aiImportLoading}>
                   취소

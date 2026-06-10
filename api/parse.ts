@@ -12,7 +12,12 @@ const systemPrompt = `주어진 텍스트를 분석해서 다음 카테고리로
 - planning: 앱 기획 관련 결정사항, 고민, 아이디어 (status는 확정/고민중/아이디어 중 하나)
 - memos: 참고할 메모, 아이디어 (tag는 메모/결정전아이디어/나중에검토 중 하나)
 - todos: 해야 할 작업들
-반드시 JSON만 반환하고 다른 텍스트 없이.`;
+반드시 아래 형태의 JSON 객체만 반환하고 다른 텍스트, 설명, markdown 코드블록 없이 반환해.
+{
+  "planning": [{ "title": "...", "status": "확정" }],
+  "memos": [{ "tag": "메모", "text": "..." }],
+  "todos": [{ "text": "...", "done": false }]
+}`;
 
 const planningStatuses = ['확정', '고민중', '아이디어'] as const;
 const memoTags = ['메모', '결정전아이디어', '나중에검토'] as const;
@@ -33,6 +38,26 @@ function asObject(value: unknown): Record<string, unknown> {
 function isTextContentBlock(value: unknown): value is { type: 'text'; text: string } {
   const object = asObject(value);
   return object.type === 'text' && typeof object.text === 'string';
+}
+
+function extractJsonObject(text: string) {
+  const trimmed = text.trim();
+  const withoutFence = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  if (withoutFence.startsWith('{') && withoutFence.endsWith('}')) {
+    return withoutFence;
+  }
+
+  const start = withoutFence.indexOf('{');
+  const end = withoutFence.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    return withoutFence.slice(start, end + 1);
+  }
+
+  return withoutFence;
 }
 
 function normalizeParsedResult(value: unknown) {
@@ -121,8 +146,14 @@ export default async function handler(request: Request) {
     : '';
 
   try {
-    return jsonResponse(normalizeParsedResult(JSON.parse(content)));
+    return jsonResponse(normalizeParsedResult(JSON.parse(extractJsonObject(content))));
   } catch {
-    return jsonResponse({ error: 'Claude returned invalid JSON' }, 502);
+    return jsonResponse(
+      {
+        error: 'Claude returned invalid JSON',
+        raw: content.slice(0, 500),
+      },
+      502,
+    );
   }
 }
