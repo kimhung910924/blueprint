@@ -10,6 +10,7 @@ import {
   List,
   LogOut,
   Menu,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -964,14 +965,54 @@ function PlanningCard({
   onStatus: (status: PlanningStatus) => void;
   onDelete: () => void;
 }) {
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+
+  function changeStatus(status: PlanningStatus) {
+    onStatus(status);
+    setStatusMenuOpen(false);
+  }
+
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300">
-      <button onClick={onOpen} className="block w-full text-left">
-        <p className="truncate text-sm font-semibold text-slate-900">{item.title}</p>
+    <div className="relative rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300">
+      <button onClick={onOpen} className="block w-full pr-14 text-left">
+        <p className="truncate text-sm font-semibold leading-6 text-slate-900">{item.title}</p>
       </button>
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <PlanningStatusSelect value={item.status} onChange={onStatus} />
-        <button onClick={onDelete} className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="기획 삭제">
+      <div className="absolute right-2 top-2 flex items-center gap-1">
+        <div className="relative">
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              setStatusMenuOpen((current) => !current);
+            }}
+            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            title="상태 변경"
+            aria-haspopup="menu"
+            aria-expanded={statusMenuOpen}
+          >
+            <MoreHorizontal size={15} />
+          </button>
+          {statusMenuOpen && (
+            <div className="absolute right-0 top-8 z-20 w-28 rounded-md border border-slate-200 bg-white p-1 shadow-lg" role="menu">
+              {planningStatuses.map((status) => (
+                <button
+                  key={status}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    changeStatus(status);
+                  }}
+                  className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs font-semibold hover:bg-slate-50 ${
+                    item.status === status ? 'text-slate-950' : 'text-slate-500'
+                  }`}
+                  role="menuitem"
+                >
+                  {status}
+                  {item.status === status && <Check size={13} />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={onDelete} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="기획 삭제">
           <Trash2 size={15} />
         </button>
       </div>
